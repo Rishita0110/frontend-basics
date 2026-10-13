@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Assistant</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        chatgpt: {
+                            main: '#212121',
+                            sidebar: '#171717',
+                            hover: '#2f2f2f',
+                            input: '#2f2f2f',
+                            border: '#424242',
+                            text: '#ececec',
+                            muted: '#b4b4b4',
+                            accent: '#10a37f'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- React & ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel CDN for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-chatgpt-main text-chatgpt-text h-screen overflow-hidden font-sans antialiased">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+        };
+
+        const MODELS = [
+            { id: 'openai', name: 'Standard', desc: 'General-purpose assistant', icon: 'brain', badge: 'FREE' },
+            { id: 'openai-fast', name: 'Fast', desc: 'Quick responses', icon: 'zap', badge: 'FAST' }
+        ];
+
+        const SUGGESTIONS = [
+            { title: "Help me write an essay", desc: "about renewable energy and sustainability", icon: "pen-tool" },
+            { title: "Code a Python script", desc: "to automate sending weekly emails", icon: "code" },
+            { title: "Suggest a 7-day itinerary", desc: "for a trip to Kyoto in autumn", icon: "compass" },
+            { title: "Brainstorm startup ideas", desc: "combining AI and personal fitness", icon: "lightbulb" }
+        ];
+
+        function App() {
+            const [sidebarOpen, setSidebarOpen] = useState(true);
+            const [selectedModel, setSelectedModel] = useState(MODELS[0]);
+            const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+            const [chats, setChats] = useState([]);
+            const [activeChatId, setActiveChatId] = useState(null);
+            const [messages, setMessages] = useState([]);
+            const [input, setInput] = useState('');
+            const [isGenerating, setIsGenerating] = useState(false);
+
+            const messagesEndRef = useRef(null);
+            const textareaRef = useRef(null);
+
+            useEffect(() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }, [messages]);
+
+            useEffect(() => {
+                if (textareaRef.current) {
+                    textareaRef.current.style.height = 'auto';
+                    textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+                }
+            }, [input]);
+
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            });
+
+            const handleNewChat = () => {
+                setActiveChatId(null);
+                setMessages([]);
+                setInput('');
+            };
+
+            const handleSendMessage = async (textToSend) => {
+                const query = textToSend || input;
+                if (!query.trim() || isGenerating) return;
+
+                const userMsg = { id: Date.now().toString(), sender: 'user', text: query };
+                const updatedMessages = [...messages, userMsg];
+                setMessages(updatedMessages);
+                setInput('');
+                setIsGenerating(true);
+
+                let currentChatId = activeChatId;
+                if (!currentChatId) {
+                    currentChatId = Date.now().toString();
+                    const newChat = { id: currentChatId, title: query.slice(0, 28) + '...' };
+                    setChats(prev => [newChat, ...prev]);
+                    setActiveChatId(currentChatId);
+                }
+
+                const aiMsgId = (Date.now() + 1).toString();
+                setMessages(prev => [...prev, { id: aiMsgId, sender: 'ai', text: '' }]);
+
+                try {
+                    const conversation = updatedMessages.map(m =>
+                        `${m.sender === 'user' ? 'User' : 'Assistant'}: ${m.text}`
+                    ).join('\n');
+                    const response = await fetch(
+                        `https://text.pollinations.ai/${encodeURIComponent(conversation)}?model=${encodeURIComponent(selectedModel.id)}`
+                    );
+                    if (!response.ok) throw new Error('Could not get a response. Please try again.');
+                    const aiText = await response.text();
+                    setMessages(prev =>
+                        prev.map(msg => msg.id === aiMsgId ? { ...msg, text: aiText } : msg)
+                    );
+                } catch (error) {
+                    setMessages(prev =>
+                        prev.map(msg => msg.id === aiMsgId ? { ...msg, text: `⚠️ Error: ${error.message}` } : msg)
+                    );
+                } finally {
+                    setIsGenerating(false);
+                }
+            };
+
+            const deleteChat = (id, e) => {
+                e.stopPropagation();
+                setChats(chats.filter(c => c.id !== id));
+                if (activeChatId === id) handleNewChat();
+            };
+
+            return (
+                <div className="flex h-screen w-full bg-chatgpt-main text-chatgpt-text select-none">
+
+                    {/* SIDEBAR */}
+                    <div className={`${sidebarOpen ? 'w-[260px]' : 'w-0'} transition-all duration-300 ease-in-out bg-chatgpt-sidebar flex flex-col h-full border-r border-chatgpt-border/30 overflow-hidden relative z-20`}>
+                        <div className="p-3 flex items-center justify-between">
+                            <button 
+                                onClick={handleNewChat}
+                                className="flex items-center gap-2 flex-1 p-2 text-sm rounded-lg border border-chatgpt-border/50 hover:bg-chatgpt-hover transition text-left font-medium"
+                            >
+                                <Icon name="plus" size={18} />
+                                <span>New chat</span>
+                            </button>
+                            <button 
+                                onClick={() => setSidebarOpen(false)}
+                                className="p-2 hover:bg-chatgpt-hover rounded-lg text-chatgpt-muted hover:text-white transition ml-1"
+                            >
+                                <Icon name="panel-left-close" size={18} />
+                            </button>
+                        </div>
+
+                        {/* History */}
+                        <div className="flex-1 overflow-y-auto px-2 space-y-1 text-xs font-medium text-chatgpt-muted">
+                            <div className="px-3 py-2 font-semibold text-[11px] uppercase tracking-wider text-chatgpt-muted/70">Chat History</div>
+                            {chats.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-chatgpt-muted/50 italic">No chats yet</div>
+                            ) : (
+                                chats.map(chat => (
+                                    <div 
+                                        key={chat.id}
+                                        onClick={() => setActiveChatId(chat.id)}
+                                        className={`group flex items-center justify-between p-2.5 rounded-lg cursor-pointer text-sm font-normal text-chatgpt-text transition ${activeChatId === chat.id ? 'bg-chatgpt-hover' : 'hover:bg-chatgpt-hover/50'}`}
+                                    >
+                                        <span className="truncate flex-1">{chat.title}</span>
+                                        <button 
+                                            onClick={(e) => deleteChat(chat.id, e)}
+                                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition"
+                                        >
+                                            <Icon name="trash-2" size={14} />
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        <div className="p-2 border-t border-chatgpt-border/30">
+                            <button 
+                                onClick={() => setSettingsOpen(true)}
+                                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-chatgpt-hover transition text-sm text-left"
+                            >
+                                <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-white text-xs">
+                                    AI
+                                </div>
+                                <div className="flex-1 truncate">
+                                    <div className="font-medium text-white text-xs">User Account</div>
+                                    <div className="text-[11px] text-chatgpt-muted">AI Assistant</div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* MAIN CHAT AREA */}
+                    <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-chatgpt-main">
+
+                        {/* Top Header */}
+                        <div className="h-14 border-b border-chatgpt-border/20 flex items-center justify-between px-4 z-10">
+                            <div className="flex items-center gap-2">
+                                {!sidebarOpen && (
+                                    <button 
+                                        onClick={() => setSidebarOpen(true)}
+                                        className="p-2 hover:bg-chatgpt-hover rounded-lg text-chatgpt-muted hover:text-white transition"
+                                    >
+                                        <Icon name="panel-left" size={18} />
+                                    </button>
+                                )}
+
+                                <div className="relative">
+                                    <button 
+                                        onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                                        className="flex items-center gap-2 text-lg font-semibold px-3 py-1.5 rounded-xl hover:bg-chatgpt-hover transition"
+                                    >
+                                        <span>{selectedModel.name}</span>
+                                        <Icon name="chevron-down" size={16} className="text-chatgpt-muted" />
+                                    </button>
+
+                                    {isModelDropdownOpen && (
+                                        <div className="absolute top-full left-0 mt-2 w-72 bg-chatgpt-sidebar border border-chatgpt-border/60 rounded-2xl shadow-2xl p-1.5 z-50">
+                                            {MODELS.map(model => (
+                                                <div 
+                                                    key={model.id}
+                                                    onClick={() => {
+                                                        setSelectedModel(model);
+                                                        setIsModelDropdownOpen(false);
+                                                    }}
+                                                    className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition ${selectedModel.id === model.id ? 'bg-chatgpt-hover' : 'hover:bg-chatgpt-hover/50'}`}
+                                                >
+                                                    <Icon name={model.icon} size={20} className="mt-0.5 text-chatgpt-accent" />
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 font-medium text-sm">
+                                                            {model.name}
+                                                            <span className="text-[10px] bg-chatgpt-border/50 px-1.5 py-0.5 rounded font-mono text-chatgpt-muted">{model.badge}</span>
+                                                        </div>
+                                                        <div className="text-xs text-chatgpt-muted mt-0.5">{model.desc}</div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Chat Messages */}
+                        <div className="flex-1 overflow-y-auto px-4 py-6 flex flex-col items-center">
+                            {messages.length === 0 ? (
+                                <div className="flex-1 flex flex-col items-center justify-center max-w-2xl w-full text-center my-auto">
+                                    <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center mb-6">
+                                        <Icon name="sparkles" size={24} className="text-white" />
+                                    </div>
+                                    <h1 className="text-2xl font-semibold mb-8">What can I help with today?</h1>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full">
+                                        {SUGGESTIONS.map((item, index) => (
+                                            <button 
+                                                key={index}
+                                                onClick={() => handleSendMessage(`${item.title} ${item.desc}`)}
+                                                className="flex flex-col items-start p-4 rounded-2xl border border-chatgpt-border/40 hover:bg-chatgpt-hover/60 transition text-left group"
+                                            >
+                                                <div className="flex items-center gap-2 text-sm font-medium text-chatgpt-text group-hover:text-white">
+                                                    <Icon name={item.icon} size={16} className="text-chatgpt-muted" />
+                                                    <span>{item.title}</span>
+                                                </div>
+                                                <span className="text-xs text-chatgpt-muted mt-1">{item.desc}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="w-full max-w-3xl space-y-6">
+                                    {messages.map(msg => (
+                                        <div 
+                                            key={msg.id} 
+                                            className={`flex gap-4 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                                        >
+                                            {msg.sender === 'ai' && (
+                                                <div className="w-8 h-8 rounded-full bg-chatgpt-accent flex items-center justify-center text-white shrink-0 mt-1">
+                                                    <Icon name="bot" size={18} />
+                                                </div>
+                                            )}
+
+                                            <div className={`relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                                                msg.sender === 'user' 
+                                                    ? 'bg-[#2f2f2f] text-white self-end' 
+                                                    : 'text-chatgpt-text w-full'
+                                            }`}>
+                                                <div className="whitespace-pre-wrap font-sans">
+                                                    {msg.text || (isGenerating && msg.sender === 'ai' ? <span className="animate-pulse">Thinking...</span> : '')}
+                                                </div>
+
+                                                {msg.sender === 'ai' && msg.text && (
+                                                    <div className="flex items-center gap-2 mt-3 text-chatgpt-muted">
+                                                        <button onClick={() => navigator.clipboard.writeText(msg.text)} className="p-1 hover:text-white transition">
+                                                            <Icon name="copy" size={14} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div ref={messagesEndRef} />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Input Area */}
+                        <div className="w-full max-w-3xl mx-auto px-4 pb-4">
+                            <div className="relative bg-chatgpt-input border border-chatgpt-border/60 rounded-3xl p-3 shadow-lg focus-within:border-chatgpt-muted/60 transition">
+                                <textarea
+                                    ref={textareaRef}
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            handleSendMessage();
+                                        }
+                                    }}
+                                    placeholder="Message ChatGPT..."
+                                    rows={1}
+                                    className="w-full bg-transparent text-chatgpt-text placeholder-chatgpt-muted outline-none resize-none px-2 max-h-48 text-sm"
+                                />
+
+                                <div className="flex items-center justify-between pt-2 px-1">
+                                    <div className="flex items-center gap-1">
+                                        <button className="p-2 hover:bg-chatgpt-hover rounded-full text-chatgpt-muted hover:text-white transition">
+                                            <Icon name="paperclip" size={18} />
+                                        </button>
+                                    </div>
+
+                                    <button 
+                                        onClick={() => handleSendMessage()}
+                                        disabled={!input.trim() || isGenerating}
+                                        className={`p-2 rounded-full transition ${input.trim() ? 'bg-white text-black hover:bg-gray-200' : 'bg-chatgpt-border/40 text-chatgpt-muted cursor-not-allowed'}`}
+                                    >
+                                        <Icon name={isGenerating ? "square" : "arrow-up"} size={16} />
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="text-center text-[11px] text-chatgpt-muted/60 mt-2">
+                                Powered by Groq AI. Free real-time responses.
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
